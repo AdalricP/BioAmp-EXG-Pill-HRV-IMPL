@@ -29,11 +29,6 @@
    SOFTWARE.
 */
 
-/*
-HRV IMPLEMENTATION BY ADALRICP, SAME LICENSE
-I'M TOO LAZY TO CHANGE THIS SHIT
-*/
-
 #include <math.h>
 #include <CircularBuffer.h>
 
@@ -42,6 +37,7 @@ I'M TOO LAZY TO CHANGE THIS SHIT
 #define INPUT_PIN A2 //Analog pin change if input connected to other pin
 #define OUTPUT_PIN 13
 #define DATA_LENGTH 16
+#define RR_BUFFER_SIZE 50  // Buffer size for RR intervals
 
 
 uint32_t avg = 0;
@@ -50,13 +46,16 @@ bool peak = false;
 int reading = 0;
 
 uint8_t BPM = 0;
-float HRV_RMSSD = 0.0;
 bool IgnoreReading = false;
 bool FirstPulseDetected = false;
 unsigned long FirstPulseTime = 0;
 unsigned long SecondPulseTime = 0;
 unsigned long PulseInterval = 0;
 CircularBuffer<int,30> buffer;
+
+// RR interval storage
+float rr_intervals[RR_BUFFER_SIZE];  // Changed to float for better precision
+int rr_count = 0;
 
 void setup() {
   // Serial connection begin
@@ -97,6 +96,18 @@ void loop() {
         else{
           SecondPulseTime = millis();
           PulseInterval = SecondPulseTime - FirstPulseTime;
+          
+          // Print peak detection (skip first peak since RR[0] is wrong)
+          static bool first_peak_skipped = false;
+          if (first_peak_skipped) {
+            Serial.print("Peak detected! RR Interval: ");
+            Serial.print(PulseInterval);
+            Serial.print(" ms, BPM: ");
+            Serial.println(BPM);
+          } else {
+            first_peak_skipped = true;
+          }
+          
           buffer.unshift(PulseInterval);
           FirstPulseTime = SecondPulseTime;
         }
@@ -111,25 +122,19 @@ void loop() {
         }
         BPM = (1.0/avg) * 60.0 * 1000 * buffer.size();
         avg = 0;
-        
-        // Calculate HRV instead of that crappy BPM
-        HRV_RMSSD = calculateHRV_RMSSD();
-        
         buffer.pop();
-        if (BPM < 240){
-          Serial.print("BPM: ");
-          Serial.println(HRV_RMSSD, 2);
-          Serial.flush();
-        }
-      }  
+      }
+      
   }
 }
 
 bool Getpeak(float new_sample) {
+  // Buffers for data, mean, and standard deviation
   static float data_buffer[DATA_LENGTH];
   static float mean_buffer[DATA_LENGTH];
   static float standard_deviation_buffer[DATA_LENGTH];
   
+  // Check for peak
   if (new_sample - mean_buffer[data_index] > (DATA_LENGTH/2) * standard_deviation_buffer[data_index]) {
     data_buffer[data_index] = new_sample + data_buffer[data_index];
     peak = true;
@@ -138,46 +143,29 @@ bool Getpeak(float new_sample) {
     peak = false;
   }
 
+  // Calculate mean
   float sum = 0.0, mean, standard_deviation = 0.0;
   for (int i = 0; i < DATA_LENGTH; ++i){
     sum += data_buffer[(data_index + i) % DATA_LENGTH];
   }
   mean = sum/DATA_LENGTH;
 
+  // Calculate standard deviation
   for (int i = 0; i < DATA_LENGTH; ++i){
     standard_deviation += pow(data_buffer[(i) % DATA_LENGTH] - mean, 2);
   }
 
+  // Update mean buffer
   mean_buffer[data_index] = mean;
 
+  // Update standard deviation buffer
   standard_deviation_buffer[data_index] =  sqrt(standard_deviation/DATA_LENGTH);
 
+  // Update data_index
   data_index = (data_index+1)%DATA_LENGTH;
 
   // Return peak
   return peak;
-}
-
-// Calculate HRV using this thing called RMSSD
-float calculateHRV_RMSSD() {
-  if (buffer.size() < 2) {
-    return 0.0; 
-  }
-  
-  float sum_squared_diffs = 0.0;
-  int valid_diffs = 0;
-  
-  for (int i = 0; i < buffer.size() - 1; i++) {
-    float diff = buffer[i] - buffer[i + 1];
-    sum_squared_diffs += diff * diff;
-    valid_diffs++;
-  }
-  
-  if (valid_diffs > 0) {
-    return sqrt(sum_squared_diffs / valid_diffs);
-  }
-  
-  return 0.0;
 }
 
 // Band-Pass Butterworth IIR digital filter, generated using filter_gen.py.
