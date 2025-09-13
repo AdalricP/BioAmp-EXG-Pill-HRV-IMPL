@@ -117,9 +117,8 @@ void loop() {
         
         buffer.pop();
         if (BPM < 240){
-          Serial.print("HRV: ");
-          Serial.print(HRV_RMSSD, 2);
-          Serial.println(" ms");
+          Serial.print("BPM: ");
+          Serial.println(HRV_RMSSD, 2);
           Serial.flush();
         }
       }  
